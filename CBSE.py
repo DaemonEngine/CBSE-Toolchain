@@ -37,6 +37,13 @@ import argparse, sys
 import os.path
 import re
 
+# A data container created from the YAML 'plain' tag
+class Plain:
+    def __init__(self, data):
+        self.data = data
+
+    def value(self):
+        return self.data
 
 class CommonAttribute:
     def __init__(self, name, typ):
@@ -117,18 +124,19 @@ class Component:
         self.param_list = sorted(self.param_list, key = lambda param: param.name)
         self.messages = messages
         self.priority = None
-        self.requires = requires
+        self.requiredComponents = requires.keys() # Only names for now.
+        self.requiredParameters = requires
         self.inherits = inherits
 
     def gather_messages(self, messages):
         self.messages = [messages[m] for m in self.messages]
 
     def gather_component_dependencies(self, components):
-        self.requires = [components[c] for c in self.requires]
-        self.inherits = [components[c] for c in self.inherits]
+        self.requiredComponents = [components[c] for c in self.requiredComponents]
+        self.inherits           = [components[c] for c in self.inherits]
 
     def for_each_component_dependencies(self, fun):
-        for require in self.requires:
+        for require in self.requiredComponents:
             fun(require)
         for inherit in self.inherits:
             fun(inherit)
@@ -166,25 +174,28 @@ class Component:
         return [p.name for p in self.param_list]
 
     def get_required_components(self):
-        return self.requires
+        return self.requiredComponents
+
+    def get_required_parameters(self):
+        return self.requiredParameters
 
     def get_own_required_components(self):
         #TODO
-        return self.requires
+        return self.requiredComponents
 
     def get_required_component_declarations(self):
-        return [c.get_type_name() + '& r_' + c.get_type_name() for c in self.requires]
+        return [c.get_type_name() + '& r_' + c.get_type_name() for c in self.requiredComponents]
 
     def get_own_required_component_declarations(self):
         #TODO
-        return [c.get_type_name() + '& r_' + c.get_type_name() for c in self.requires]
+        return [c.get_type_name() + '& r_' + c.get_type_name() for c in self.requiredComponents]
 
     def get_required_component_names(self):
-        return ['r_' + c.get_type_name() for c in self.requires]
+        return ['r_' + c.get_type_name() for c in self.requiredComponents]
 
     def get_own_required_component_names(self):
         #TODO
-        return ['r_' + c.get_type_name() for c in self.requires]
+        return ['r_' + c.get_type_name() for c in self.requiredComponents]
 
     def __repr__(self):
         return "Component({}, ...)".format(self.name)
@@ -229,12 +240,32 @@ class Entity:
         for component in self.components:
             for param in component.param_list:
                 if not param.name in self.params[component.name]:
-                    if param.default != None:
-                        self.params[component.name][param.name] = param.default
-                    else:
-                        self.user_params[component.name][param.name] = param
-                        self.has_user_params = True
-                elif self.params[component.name][param.name] == 'USER':
+                    # Use the parameters own default value, if it has one, as fallback
+                    self.params[component.name][param.name] = param.default
+
+                    # Look for a value given by another component that depends on the current one
+                    dependency_sets_parameter = False
+                    for dependent in self.components:
+                        required_parameters = dependent.get_required_parameters()
+                        if component.name not in required_parameters:
+                            continue
+                        if required_parameters[component.name] is None:
+                            continue
+                        for required_param, required_value in required_parameters[component.name].items():
+                            if param.name != required_param:
+                                continue
+                            if dependency_sets_parameter:
+                                raise Exception("Multiple components set a default value for the same parameter of a required component.")
+                            self.params[component.name][param.name] = required_value
+                            dependency_sets_parameter = True
+
+                # If we still have not found a value, let the user decide
+                if not param.name in self.params[component.name]:
+                    self.params[component.name][param.name] = None
+
+                # Let the user decide on the value
+                if self.params[component.name][param.name] == None:
+                    self.params[component.name].pop(param.name)
                     self.user_params[component.name][param.name] = param
                     self.has_user_params = True
 
@@ -264,16 +295,17 @@ class Entity:
 
 def convert_params(params):
     # Convert defaults to strings that C++ understands.
+    # TODO: Add support for char and others
+    # WORKAROUND: Can specify char x via !!python/object/apply:builtins.ord ['x']
     for param, value in params.items():
         if type(value) == bool:
             value = str(value).lower()
         elif type(value) == str:
-            # Python doesn't distinguish char and string, so we default to
-            # string. If someone wants to use a char parameter, they will still
-            # be able to write the value as a raw number or convert a char via
-            #     !!python/object/apply:builtins.ord ['x']
-            # where x is the char to be converted.
             value = '"' + value + '"'
+        elif type(value) == Plain:
+            value = value.value()
+        elif value is None:
+            pass
         else:
             value = str(value)
         params[param] = value
@@ -326,7 +358,7 @@ def load_components(definitions):
             kwargs['defaults'] = OrderedDict()
 
         if not 'requires' in kwargs:
-            kwargs['requires'] = []
+            kwargs['requires'] = OrderedDict()
 
         if not 'inherits' in kwargs:
             kwargs['inherits'] = OrderedDict()
@@ -334,6 +366,11 @@ def load_components(definitions):
             raise Exception("inherits not handled for now")
 
         convert_params(kwargs['defaults'])
+
+        for component in kwargs['requires'].keys():
+            if kwargs['requires'][component] is not None:
+                convert_params(kwargs['requires'][component])
+
         components[name] = Component(name, **kwargs)
     return components
 
@@ -482,9 +519,14 @@ class OrderedLoader(yaml.Loader):
         loader.flatten_mapping(node)
         return OrderedDict(loader.construct_pairs(node))
 
+    @staticmethod
+    def MakePlain(loader, node):
+        return Plain(node.value)
+
     def __init__(self, stream):
         yaml.Loader.__init__(self, stream)
         self.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, self.OrderedMapping)
+        self.add_constructor(u'tag:yaml.org,2002:plain', self.MakePlain)
 
 
 if __name__ == '__main__':
