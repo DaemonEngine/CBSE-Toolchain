@@ -123,9 +123,10 @@ class Entity {
 		);
 
 		/**
-		 * @brief Base entity deconstructor.
+		 * @brief Base entity deconstructor. It does reset the vtables in
+		 * addition to what inheriting constructors do
 		 */
-		virtual ~Entity() = default;
+		virtual ~Entity();
 
 		// /////////////// //
 		// Message helpers //

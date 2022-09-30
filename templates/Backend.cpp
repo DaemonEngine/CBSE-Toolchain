@@ -63,6 +63,23 @@ Entity::Entity(const MessageHandler *messageHandlers, const int* componentOffset
 
 {}
 
+// empty vtables for the destructor
+const int emptyComponentOffsets[] = {
+	{% for component in components %}
+		0,
+	{% endfor %}
+};
+const MessageHandler emptyMessageHandlers[] = {
+	{% for message in messages %}
+		nullptr,
+	{% endfor %}
+};
+
+Entity::~Entity() {
+	componentOffsets = emptyComponentOffsets;
+	messageHandlers = emptyMessageHandlers;
+}
+
 // Base entity's message dispatcher.
 bool Entity::SendMessage(EntityMessage msg, const void* data) {
 	MessageHandler handler = messageHandlers[static_cast<int>(msg)];
