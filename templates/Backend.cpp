@@ -117,6 +117,9 @@ bool Entity::SendMessage(EntityMessage msg, const void* data) {
         }
 
     {% endfor %}
+
+	std::set<{{component.get_type_name()}}*> {{component.get_base_type_name()}}::allSet;
+
 {% endfor %}
 
 // ////////////////////// //
