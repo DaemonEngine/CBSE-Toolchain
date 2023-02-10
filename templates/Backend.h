@@ -92,19 +92,17 @@ using MessageHandler = void (*)(Entity*, const void* /*_data*/);
 // Component priorities //
 // //////////////////// //
 
-// This defines a compile-time index for components.
-//* It is used to index the offset table.
-template<typename T> constexpr int ComponentPriority();
-{% for component in components %}
+//* This is a trait that declares a compile-time index for components
+//* it is used to index the offset table.
+namespace detail {
+	template<typename T> struct ComponentPriority;
+	{% for component in components %}
 
-template<> constexpr int ComponentPriority<{{component.get_type_name()}}>() {
-	return {{component.get_priority()}};
+		template<> struct ComponentPriority<{{component.get_type_name()}}> {
+			static const int value = {{component.get_priority()}};
+		};
+	{% endfor %}
 };
-{% endfor %}
-
-constexpr int NumComponents() {
-	return {{components|length}};
-}
 
 // ////////////////////////////// //
 // Declaration of the base Entity //
@@ -145,7 +143,7 @@ class Entity {
 		 * @return Pointer to component of type T or nullptr.
 		 */
 		template<typename T> const T* Get() const {
-			int index = ComponentPriority<T>();
+			int index = detail::ComponentPriority<T>::value;
 			int offset = componentOffsets[index];
 			if (offset) {
 				return (const T*) (((char*) this) + offset);
